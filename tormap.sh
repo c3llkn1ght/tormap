@@ -33,7 +33,7 @@ log() {
 	echo -e "${color}${message}${RES}"
 }
 
-#Asks for root perms
+#Asks for root perms, only necessary for the apt installs which would be better handled outside the script but oh well
 if [ "$EUID" -ne 0 ]; then
 	echo "Run as root"
 	exec sudo "$0" "$@"
@@ -42,29 +42,54 @@ fi
 
 #Installs Dependancies
 log "${YELLOW}" "Checking if tor, privoxy and proxychains are installed..."
-apt install tor
-apt install privoxy
-apt install proxychains
+# dont blindly apt install, just check if the packages are there and install them if necessary
+# privoxy is unnecessary for whats here but whatever it might come into play later down the line
+missing_pkgs=()
 
-#Checks if the last line of proxychains.conf contains necessary parameters
-lastLineChains=$(tail -n 1 "/etc/proxychains.conf")
-if [[ $lastLineChains != *'socks5 127.0.0.1 9050'* ]]; then
-	echo "socks5 127.0.0.1 9050" >> /etc/proxychains.conf
+for pkg in tor privoxy proxychains; do
+    if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+        missing_pkgs+=("$pkg")
+    fi
+done
+
+if [ ${#missing_pkgs[@]} -ne 0 ]; then
+    log "${YELLOW}" "Installing missing packages: ${missing_pkgs[*]}"
+    apt-get update -y
+    apt-get install -y "${missing_pkgs[@]}"
+else
+    log "${GREEN}" "All dependencies already installed."
 fi
 
-#Quickly deactivates tor if it was previously running
-if systemctl is-active --quiet tor@default; then
-	log "${YELLOW}" "Exiting tor to reset connection..."
-	systemctl stop --quiet tor@default
+# copy the proxychains.conf into the current directory and use it for scans
+# makes sure proxy_dns is enabled so we dont leak DNS
+
+TORPROXY_CONF="./torproxy.conf"
+
+#make the file if its not there
+if [ ! -f "$TORPROXY_CONF" ]; then
+    log "${YELLOW}" "Creating local proxychains config: $TORPROXY_CONF"
+    cp /etc/proxychains.conf "$TORPROXY_CONF"
 fi
+
+# make sure proxy_dns is there
+if ! grep -qE '^[[:space:]]*proxy_dns' "$TORPROXY_CONF"; then
+    log "${YELLOW}" "Enabling proxy_dns in $TORPROXY_CONF"
+    echo "proxy_dns" >> "$TORPROXY_CONF"
+fi
+
+# make sure the required entry is there
+if ! grep -qE '^[[:space:]]*socks5[[:space:]]+127\.0\.0\.1[[:space:]]+9050' "$TORPROXY_CONF"; then
+    log "${YELLOW}" "Adding Tor SOCKS entry to $TORPROXY_CONF"
+    echo "socks5 127.0.0.1 9050" >> "$TORPROXY_CONF"
+fi
+
 
 #Checks if required services are running
-log "${YELLOW}" "Checking tor status"
-if ! systemctl is-active --quiet tor@default; then
-	log "${YELLOW}" "tor isn't running, launching..."
-	systemctl start --quiet tor@default
+if ! systemctl is-active --quiet tor; then
+    log "${YELLOW}" "Tor isn't running, launching..."
+    systemctl start tor
 else
-	log "${GREEN}" "Tor is running!"
+    log "${GREEN}" "Tor is running."
 fi
 
 printAsciiLogo
@@ -72,6 +97,7 @@ printAsciiLogo
 #Lauches TORmap console
 log "${GREEN}" "Launching console..."
 if [ -f "./console.py" ]; then
-	chmod +x console.py
-	./console.py launch
+    python3 console.py launch
+else
+    log "${RED}" "console.py not found!"
 fi

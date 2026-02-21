@@ -20,12 +20,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger('TORmap')
 
-# Checks for root perms
-def checkRoot():
-    if os.geteuid() != 0:
-        print("Script must be run as root!")
-        sys.exit(1)
-
 def gen_decoys(count=4) -> str:
     """
     gen a decoy string for -D
@@ -35,21 +29,24 @@ def gen_decoys(count=4) -> str:
     ranges = [
         "138.197.0.0/16",
         "185.228.168.0/24",
-        "23.67.0.0/16",
+        "23.67.0.0/16"
     ]
 
-    def rand_cidr_ips(cidr: str) -> str:
+    def rand_cidr_ip(cidr: str) -> str:
         net = ipaddress.IPv4Network(cidr, strict=False)
+
         network_int = int(net.network_address)
         broadcast_int = int(net.broadcast_address)
+
         random_int = random.randint(network_int + 1, broadcast_int - 1)
+
         return str(ipaddress.IPv4Address(random_int))
 
     decoys = set()
 
     while len(decoys) < count:
         cidr = random.choice(ranges)
-        decoys.add(rand_cidr_ips(cidr))
+        decoys.add(rand_cidr_ip(cidr))
 
     decoy_list = list(decoys)
     insert_pos = random.randint(0, len(decoy_list))
@@ -67,11 +64,13 @@ class TORmapConsole(cmd.Cmd):
         super().__init__()
         self.target = ""
         self.flags = []
+        # -O and -f wont work over tor/proxychains
         self.allowed_flags = {
-            "-sS", "-sV", "-p-", "-Pn", "-O", "-n", "-f"
+            "-sV", "-p-"
         }
+        # --spoof-mac doesnt do anything over tor. you arent sending ethernet frames or exposing your NIC.
         self.valuesFlag = {
-            "-p", "--spoof-mac", "--data-length", "--max-retries"
+            "-p", "--data-length", "--max-retries"
         }
 
     # on input "set target" or "set flags"
@@ -132,13 +131,35 @@ class TORmapConsole(cmd.Cmd):
         if not self.target:
             logger.error("Target not set. Use: set target <IP/host>")
             return
+
+        # -sS wont work over proxychains, Tor only allows tcp connections over SOCKS
+        # these flags are mandatory for nmap to work over proxychains
+        # -n i guess isnt technically mandatory, but should definitely be used
+        mandatory_flags = ["-sT", "-Pn", "-n"]
+        final_flags = list(self.flags)
+
+        for flag in mandatory_flags:
+            if flag not in final_flags:
+                final_flags.append(flag)
+
+        # decoys technically dont do anything for the user in this chain, but there is no harm in using them
+        # they won't improve anonymity and they dont change tor routing, but they are fun
         decoys = gen_decoys(count=5)
-        command = ["proxychains", "nmap"] + self.flags + ["-D", decoys, "-vvv"] + [self.target]
+
+        command = (
+                ["proxychains", "-f", "torproxy.conf"]
+                + ["nmap"]
+                + final_flags
+                + ["-D", decoys, "-vvv"]
+                + [self.target]
+        )
+
         logger.info(f"Running: {shlex.join(command)}")
-        try:
-            subprocess.run(command)
-        except Exception as e:
-            logger.error(f"Execution failed: {e}")
+
+        result = subprocess.run(command)
+
+        if result.returncode != 0:
+            logger.error(f"Nmap exited with code {result.returncode}")
 
     # on input "exit"
     def do_exit(self, args):
@@ -153,33 +174,30 @@ Available Commands:
 
     set target <ip>		Set the target IP or Host
     set flags <options>	Set the Nmap flags
-    show			Show the current settings
-    run			Run Nmap through proxychains
-    exit			Exit the console
-    help			Show this message
+    show			    Show the current settings
+    run			        Run Nmap through proxychains
+    exit			    Exit the console
+    help			    Show this message
 
 
 Flags Available (Use with: set flags <flags>):
 
+    Mandatory Flags:
+      -sT           Only scan type Tor supports
+      -Pn			Skip ICMP host discovery (won’t work on tor)
+      -n            Prevents DNS leaks (Target will still see Tor exit node IP)
+    
     Scan Tags:
-      -sS			TCP/SYN (Stealth) scan
       -sV			Service Version Detection
       -p			Specified Ports to scan
 
-    Host Discovery:
-      -Pn			Treat hosts as online (skip ping)
-
     Agressiveness:
-      -O			Enable OS detection
-      -n			skip DNS resolution
       --max-retries <n>	Number of times nmap will retry sending a probe
 
     Bypass:
-      -f			Fragment Packets
-      --spoof-mac		Spoofs mac address (Cisco, Apple, Dell, etc.)
       --data-length <n>	Append random data to packets
 
-    Note: you can combine flags by typing 'set flags -sS -Pn -n'
+    Note: you can combine flags by typing 'set flags -sV -p-'
 
 """
         logger.info(helpTxt.strip())
@@ -189,7 +207,6 @@ Flags Available (Use with: set flags <flags>):
 def launch():
     logger.info("Welcome to the TORmap console!")
     logger.info("Map a network like Anon")
-    checkRoot()
     shell = TORmapConsole()
     shell.cmdloop()
 
