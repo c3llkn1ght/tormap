@@ -7,7 +7,6 @@
 
 import cmd
 import logging
-import os
 import shlex
 import subprocess
 import sys
@@ -23,7 +22,6 @@ logger = logging.getLogger('TORmap')
 def gen_decoys(count=4) -> str:
     """
     gen a decoy string for -D
-    could use something more robust than defined ranges but whatever
     """
 
     ranges = [
@@ -143,11 +141,12 @@ class TORmapConsole(cmd.Cmd):
                 final_flags.append(flag)
 
         # decoys technically dont do anything for the user in this chain, but there is no harm in using them
-        # they won't improve anonymity and they dont change tor routing, but they are fun
+        # they won't improve anonymity and they dont change tor routing, but whatever, its fun
         decoys = gen_decoys(count=5)
 
         command = (
-                ["proxychains", "-f", "torproxy.conf"]
+                # use the file made in the .sh
+                ["proxychains", "-f", "./torproxy.conf"]
                 + ["nmap"]
                 + final_flags
                 + ["-D", decoys, "-vvv"]

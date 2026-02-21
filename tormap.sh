@@ -33,7 +33,7 @@ log() {
 	echo -e "${color}${message}${RES}"
 }
 
-#Asks for root perms, only necessary for the apt installs which would be better handled outside the script but oh well
+#Asks for root perms, only necessary for the apt installs
 if [ "$EUID" -ne 0 ]; then
 	echo "Run as root"
 	exec sudo "$0" "$@"
@@ -43,7 +43,6 @@ fi
 #Installs Dependancies
 log "${YELLOW}" "Checking if tor, privoxy and proxychains are installed..."
 # dont blindly apt install, just check if the packages are there and install them if necessary
-# privoxy is unnecessary for whats here but whatever it might come into play later down the line
 missing_pkgs=()
 
 for pkg in tor privoxy proxychains; do
@@ -60,7 +59,7 @@ else
     log "${GREEN}" "All dependencies already installed."
 fi
 
-# copy the proxychains.conf into the current directory and use it for scans
+# copy the proxychains.conf into the current directory and use that for scans
 # makes sure proxy_dns is enabled so we dont leak DNS
 
 TORPROXY_CONF="./torproxy.conf"
